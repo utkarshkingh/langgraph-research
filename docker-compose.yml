@@ -1,0 +1,32 @@
+# Local two-service topology mirroring the prod deployment: a gateway/orchestrator and
+# an A2A research agent, each its own container, talking over HTTP with a bearer token.
+services:
+  research_agent:
+    build:
+      context: .
+      args:
+        SERVICE: research_agent
+    environment:
+      AUTH_MODE: dev
+      DEV_TOKEN: local-dev-token
+      PORT: 8081
+    ports:
+      - "8081:8081"
+
+  orchestrator:
+    build:
+      context: .
+      args:
+        SERVICE: orchestrator
+    environment:
+      AUTH_MODE: dev
+      DEV_TOKEN: local-dev-token
+      PORT: 8080
+      RESEARCH_MODE: http
+      RESEARCH_AGENT_URL: http://research_agent:8081
+      CHECKPOINT_BACKEND: sqlite
+      SQLITE_PATH: /app/checkpoints.sqlite
+    ports:
+      - "8080:8080"
+    depends_on:
+      - research_agent

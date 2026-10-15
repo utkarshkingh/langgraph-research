@@ -1,0 +1,33 @@
+[project]
+name = "langgraph-hitl-reference"
+version = "0.1.0"
+description = "Reference implementation of a resumable, human-in-the-loop multi-agent pattern (orchestrator + A2A research agent) on LangGraph."
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2.60",
+    "langgraph-checkpoint-sqlite>=2.0.0",
+    "langchain-core>=0.3.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+]
+
+[project.optional-dependencies]
+# Production integrations — not needed for the offline local demo.
+azure = [
+    "langchain-openai>=0.2.0",   # AzureChatOpenAI
+    "azure-identity>=1.17.0",    # DefaultAzureCredential (managed identity)
+    "PyJWT[crypto]>=2.9.0",      # Entra ID JWT validation (JWKS)
+    "langgraph-checkpoint-postgres>=2.0.0",
+]
+mcp = [
+    "mcp>=1.2.0",                # MCP client + FastMCP server (Statista-style tool)
+]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

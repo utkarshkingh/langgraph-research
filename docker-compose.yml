@@ -1,38 +1,32 @@
-# Local copy of the production setup: two services + Postgres (one database each).
-#   docker compose up --build
-#   python demo.py --running
+# Local two-service topology mirroring the prod deployment: a gateway/orchestrator and
+# an A2A research agent, each its own container, talking over HTTP with a bearer token.
 services:
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-    volumes:
-      - ./postgres-init.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "app"]
-      interval: 2s
-      retries: 15
-
   research_agent:
     build:
       context: .
-      args: { SERVICE: research_agent, PORT: "8001" }
+      args:
+        SERVICE: research_agent
     environment:
-      RESEARCH_AGENT_URL: http://research_agent:8001   # the URL in its agent card
-      POSTGRES_DSN: postgresql://app:app@postgres:5432/research
-    ports: ["8001:8001"]
-    depends_on:
-      postgres: { condition: service_healthy }
+      AUTH_MODE: dev
+      DEV_TOKEN: local-dev-token
+      PORT: 8081
+    ports:
+      - "8081:8081"
 
   orchestrator:
     build:
       context: .
-      args: { SERVICE: orchestrator, PORT: "8000" }
+      args:
+        SERVICE: orchestrator
     environment:
-      RESEARCH_AGENT_URL: http://research_agent:8001
-      POSTGRES_DSN: postgresql://app:app@postgres:5432/orchestrator
-    ports: ["8000:8000"]
+      AUTH_MODE: dev
+      DEV_TOKEN: local-dev-token
+      PORT: 8080
+      RESEARCH_MODE: http
+      RESEARCH_AGENT_URL: http://research_agent:8081
+      CHECKPOINT_BACKEND: sqlite
+      SQLITE_PATH: /app/checkpoints.sqlite
+    ports:
+      - "8080:8080"
     depends_on:
-      postgres: { condition: service_healthy }
-      research_agent: { condition: service_started }
+      - research_agent

@@ -34,6 +34,7 @@ class OrchestratorState(TypedDict, total=False):
     """State for the orchestrator's outer graph."""
 
     request: str                         # the market scope to size
+    research_task_id: str                # the A2A task on the research agent
     proposed: list[dict[str, Any]]       # assumptions the research agent proposed
     approval: dict[str, Any]             # what the human returned on resume
     approval_error: str | None           # set when validation rejects the approval
@@ -47,9 +48,10 @@ def intake_node(state: OrchestratorState) -> dict[str, Any]:
 
 
 def research_gather_node(state: OrchestratorState) -> dict[str, Any]:
-    """A2A -> research agent. Comes back INPUT_REQUIRED with proposed assumptions."""
-    resp = _research.gather(GatherRequest(thread_id="n/a", query=state["request"]))
-    return {"proposed": resp.proposed}
+    """A2A -> research agent (new task). Comes back INPUT_REQUIRED with proposed assumptions."""
+    resp = _research.gather(GatherRequest(query=state["request"]))
+    # Keep the A2A task id: the approved assumptions go back to the same task.
+    return {"proposed": resp.proposed, "research_task_id": resp.task_id}
 
 
 def await_market_input_node(state: OrchestratorState) -> dict[str, Any]:
@@ -72,11 +74,13 @@ def await_market_input_node(state: OrchestratorState) -> dict[str, Any]:
 
 
 def research_finalize_node(state: OrchestratorState) -> dict[str, Any]:
-    """A2A -> research agent again, now with the approved assumptions. Validates."""
+    """A2A -> research agent again (same task), now with the approved assumptions. Validates."""
     approved = state["approval"].get("approved", state["proposed"])
     try:
         resp = _research.finalize(
-            FinalizeRequest(thread_id="n/a", query=state["request"], approved=approved)
+            FinalizeRequest(
+                task_id=state["research_task_id"], query=state["request"], approved=approved
+            )
         )
     except ValidationRejected as e:
         # Keep the reason; the router below sends the run back to the pause.

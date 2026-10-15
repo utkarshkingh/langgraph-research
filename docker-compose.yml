@@ -1,5 +1,6 @@
 # Local copy of the production topology: orchestrator + research agent + Postgres.
-# Reads .env (copy .env.example). Postgres holds the orchestrator's checkpoints.
+# Reads .env (copy .env.example). Postgres holds the orchestrator's checkpoints and
+# the research agent's A2A tasks.
 #
 # Real run:      docker compose up --build        (needs the LiteLLM + Tavily values in .env)
 # Offline backup: MODEL_BACKEND=scripted SEARCH_BACKEND=mock MCP_ENABLED=false docker compose up --build
@@ -13,11 +14,18 @@ services:
     env_file: .env
     environment:
       PORT: 8081
+      # The address callers use for this agent; it goes into the agent card.
+      RESEARCH_AGENT_URL: http://research_agent:8081
+      # The A2A task store (the agent keeps a task between gather and finalize).
+      POSTGRES_DSN: postgresql://agent:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/agent
       MODEL_BACKEND: ${MODEL_BACKEND:-litellm}
       SEARCH_BACKEND: ${SEARCH_BACKEND:-tavily}
       MCP_ENABLED: ${MCP_ENABLED:-true}
     ports:
       - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   orchestrator:
     build:

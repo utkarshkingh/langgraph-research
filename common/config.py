@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     postgres_dsn: str = ""                 # postgresql://agent:<password>@localhost:5432/agent
     sqlite_path: str = "./checkpoints.sqlite"
 
+    # the research agent's A2A task store (it keeps each task between gather and finalize)
+    task_store_backend: str = "postgres"   # postgres | memory (tests)
+
     # model
     model_backend: str = "litellm"         # litellm | azure_openai | scripted (tests)
     litellm_base_url: str = ""             # https://<approved-company-litellm>/v1

@@ -22,7 +22,10 @@ present and commented, just not exercised offline.
 """
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+import asyncio
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from common.config import settings
@@ -40,8 +43,11 @@ def verify_bearer(
 
     Usage:  @app.post("/invoke", dependencies=[Depends(verify_bearer)])
     """
-    token = creds.credentials
+    return check_token(creds.credentials)
 
+
+def check_token(token: str) -> dict:
+    """The one place a bearer token is checked (dev token, or Entra JWT)."""
     if settings.auth_mode == "dev":
         if token != settings.dev_token:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid dev token")
@@ -49,6 +55,27 @@ def verify_bearer(
 
     # AUTH_MODE=entra — production path.
     return _validate_entra_jwt(token)
+
+
+# The SDK mounts the A2A routes itself, so the agent app checks the token in a
+# middleware instead of a per-route Depends. Same check, same 401.
+PUBLIC_PATHS = {"/health", "/.well-known/agent-card.json"}   # the agent card must be public
+
+
+async def require_bearer_token(request: Request, call_next):
+    if request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    try:
+        if scheme.lower() != "bearer" or not token:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+        await asyncio.to_thread(check_token, token)
+    except HTTPException as e:
+        return JSONResponse(
+            {"detail": e.detail}, status_code=e.status_code,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await call_next(request)
 
 
 def _validate_entra_jwt(token: str) -> dict:

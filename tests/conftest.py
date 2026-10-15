@@ -11,5 +11,6 @@ os.environ.update(
     MCP_ENABLED="false",
     CHECKPOINT_BACKEND="sqlite",
     SQLITE_PATH=":memory:",
+    TASK_STORE_BACKEND="memory",
     RESEARCH_MODE="inproc",
 )

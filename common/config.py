@@ -1,5 +1,9 @@
-"""Central settings. One place to see every knob; everything has a demo-safe default."""
-from __future__ import annotations
+"""Settings, read from environment variables (or a .env file).
+
+Same code runs locally and in Azure; only these values change.
+Every setting has a safe local default, so the demo needs no .env at all.
+"""
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,32 +11,27 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # auth
-    auth_mode: str = "dev"                 # dev | entra
-    dev_token: str = "local-dev-token"
-    entra_tenant_id: str = ""
-    entra_api_audience: str = ""
-    research_agent_app_id_uri: str = ""
+    # --- Authentication (see common/security.py) ---
+    a2a_auth_mode: Literal["shared_secret", "entra", "easy_auth"] = "shared_secret"
+    a2a_shared_secret: str = "local-dev-secret"   # local only
+    a2a_entra_tenant_id: str = ""                 # entra mode
+    a2a_entra_audience: str = ""                  # e.g. api://<app-id>, entra / easy_auth modes
 
-    # service wiring
-    research_mode: str = "inproc"          # inproc | http
-    research_agent_url: str = "http://localhost:8081"
+    # --- Where the services live ---
+    orchestrator_url: str = "http://localhost:8000"
+    research_agent_url: str = "http://localhost:8001"
 
-    # checkpointer
-    checkpoint_backend: str = "sqlite"     # sqlite | postgres
-    sqlite_path: str = "./checkpoints.sqlite"
+    # --- Persistence: empty = in memory (local), set = Postgres (production) ---
     postgres_dsn: str = ""
 
-    # model
-    model_backend: str = "scripted"        # scripted | azure_openai
+    # --- LLM and tools ---
+    llm_backend: Literal["scripted", "azure_openai"] = "scripted"
     azure_openai_endpoint: str = ""
     azure_openai_deployment: str = ""
     azure_openai_api_version: str = "2024-10-21"
-
-    # tools
-    search_backend: str = "mock"           # mock | tavily
+    search_backend: Literal["mock", "tavily"] = "mock"
     tavily_api_key: str = ""
-    mcp_enabled: bool = False
+    mcp_enabled: bool = False   # true = really call the MCP server over stdio
 
 
 settings = Settings()

@@ -1,51 +1,44 @@
-"""Research agent as an A2A service (FastAPI).
+"""Research agent service: its agent card + the shared A2A app.
 
-Two operations, both behind the same bearer auth as the gateway:
-  POST /a2a/gather    -> runs the ReAct loop, returns INPUT_REQUIRED + proposed
-  POST /a2a/finalize  -> validates human-approved assumptions, returns COMPLETED
-  GET  /health        -> unauthenticated liveness
-
-The service is stateless per call; durable run state lives in the orchestrator.
-Run:  uvicorn research_agent.main:app --port 8081
+Run:  uvicorn research_agent.main:app --port 8001
 """
-from __future__ import annotations
-
-from fastapi import Depends, FastAPI, HTTPException
-
-from common.a2a import (
-    FinalizeRequest,
-    FinalizeResponse,
-    GatherRequest,
-    GatherResponse,
-    TaskState,
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    AgentSkill,
+    HTTPAuthSecurityScheme,
+    SecurityRequirement,
+    SecurityScheme,
+    StringList,
 )
-from common.auth import verify_bearer
-from research_agent import graph
 
-app = FastAPI(title="research-agent (A2A)")
+from common.config import settings
+from common.server import create_app
+from research_agent.graph import build_graph
 
+agent_card = AgentCard(
+    name="Research Agent",
+    description="Finds low/base/high market figures with web search and Statista (MCP), "
+                "then asks a human to approve them.",
+    version="1.0.0",
+    supported_interfaces=[AgentInterface(protocol_binding="JSONRPC",
+                                         url=settings.research_agent_url,
+                                         protocol_version="1.0")],
+    capabilities=AgentCapabilities(streaming=False),
+    default_input_modes=["text/plain", "application/json"],
+    default_output_modes=["application/json"],
+    skills=[AgentSkill(
+        id="research_market",
+        name="Research market figures",
+        description="Returns reviewed assumptions, each with a source and source status.",
+        tags=["research", "market-sizing"],
+        examples=["Size the European EV charging aftermarket"],
+    )],
+    # Tells callers how to authenticate: a bearer token.
+    security_schemes={"bearer": SecurityScheme(
+        http_auth_security_scheme=HTTPAuthSecurityScheme(scheme="bearer"))},
+    security_requirements=[SecurityRequirement(schemes={"bearer": StringList()})],
+)
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.post("/a2a/gather", response_model=GatherResponse)
-def a2a_gather(req: GatherRequest, _=Depends(verify_bearer)) -> GatherResponse:
-    proposed = graph.gather(req.query)
-    # We always ask for human approval before finalizing -> INPUT_REQUIRED.
-    return GatherResponse(
-        state=TaskState.INPUT_REQUIRED,
-        proposed=proposed,
-        note="approve, override, or edit the proposed assumptions",
-    )
-
-
-@app.post("/a2a/finalize", response_model=FinalizeResponse)
-def a2a_finalize(req: FinalizeRequest, _=Depends(verify_bearer)) -> FinalizeResponse:
-    try:
-        variables = graph.finalize(req.query, req.approved)
-    except ValueError as e:
-        # validation failure (e.g. low<=base<=high) is a client error, not a crash
-        raise HTTPException(400, str(e)) from e
-    return FinalizeResponse(state=TaskState.COMPLETED, variables=variables)
+app = create_app(agent_card, build_graph)

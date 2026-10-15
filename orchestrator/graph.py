@@ -1,113 +1,84 @@
-"""The outer orchestrator graph — where durable human-in-the-loop lives.
+"""The orchestrator: calls the research agent over A2A and relays its questions to the user.
 
-    intake ──> research_gather ──> await_market_input ──> research_finalize ──> report ──> END
-                  (A2A call)         (interrupt + pause)      (A2A call)  │
-                                            ▲                             │
-                                            └──── rejected by validation ─┘
+    START -> call_research --input required--> human_review --+
+                 ^                                            |
+                 +--------------------------------------------+
+                 |
+                 +--completed--> report -> END
+                 +--failed-----> END  (the A2A task fails)
 
-`await_market_input` calls LangGraph's interrupt(): the run pauses and the state is
-written to the checkpointer under the thread_id. The process can be recycled; the user
-can approve later. On resume (Command(resume=...)) the graph continues from the saved
-checkpoint with the human's decision in hand.
-
-If the research agent's validation rejects what the human sent (e.g. low > base), the
-graph loops back to the pause and shows the error, so the human can fix it and resume
-again. The run never gets stuck on a bad answer.
-
-This is the whole point of the pattern: the pause is a checkpoint, not a held-open
-request or a timeout.
+When the research agent pauses (TASK_STATE_INPUT_REQUIRED), the orchestrator
+pauses too, with interrupt(), and shows the user the same question. The user's
+answer is sent back to the research agent on the SAME task id, which resumes it.
+Both services checkpoint their own state.
 """
-from __future__ import annotations
-
-from typing import Any
+from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from common.a2a import FinalizeRequest, GatherRequest, ValidationRejected
-from orchestrator.clients import get_research_client
-from orchestrator.state import OrchestratorState
-
-_research = get_research_client()
+from common.config import settings
+from common.security import get_outgoing_token
+from orchestrator.a2a_client import send_message
 
 
-def intake_node(state: OrchestratorState) -> dict[str, Any]:
-    """Normalize the incoming request. (Collapses the real entry routers/gates.)"""
-    return {"request": state["request"].strip()}
+class OrchestratorState(TypedDict, total=False):
+    request: str
+    research_task_id: str
+    research_context_id: str
+    research_state: str     # A2A task state of the research agent's task
+    research_data: dict     # its question, or its result
+    human_answer: Any
+    result: dict            # final output, read by the A2A executor
 
 
-def research_gather_node(state: OrchestratorState) -> dict[str, Any]:
-    """A2A -> research agent. Comes back INPUT_REQUIRED with proposed assumptions."""
-    resp = _research.gather(GatherRequest(thread_id="n/a", query=state["request"]))
-    return {"proposed": resp.proposed}
+async def call_research(state: OrchestratorState) -> dict:
+    """A2A call. First time: send the request. After a pause: send the human's answer."""
+    token = await get_outgoing_token()
+    if state.get("research_task_id"):
+        task = await send_message(settings.research_agent_url, token, state["human_answer"],
+                                  state["research_task_id"], state["research_context_id"])
+    else:
+        task = await send_message(settings.research_agent_url, token, state["request"])
+    return {
+        "research_task_id": task.task_id,
+        "research_context_id": task.context_id,
+        "research_state": task.state,
+        "research_data": task.data,
+    }
 
 
-def await_market_input_node(state: OrchestratorState) -> dict[str, Any]:
-    """THE human-in-the-loop pause.
-
-    interrupt(payload) surfaces the proposed assumptions to the caller and suspends the
-    run. Whatever the human sends back via Command(resume=...) becomes `decision`.
-    On a retry after a rejection, the payload also carries the validation error.
-    """
-    decision = interrupt(
-        {
-            "type": "approve_assumptions",
-            "request": state["request"],
-            "proposed": state["proposed"],
-            "error": state.get("approval_error"),
-            "instructions": "Return {'approved': [...]} — the assumptions to finalize.",
-        }
-    )
-    return {"approval": decision}
+def human_review(state: OrchestratorState) -> dict:
+    """Pause and pass the research agent's question up to the user."""
+    answer = interrupt(state["research_data"])
+    return {"human_answer": answer}
 
 
-def research_finalize_node(state: OrchestratorState) -> dict[str, Any]:
-    """A2A -> research agent again, now with the approved assumptions. Validates."""
-    approved = state["approval"].get("approved", state["proposed"])
-    try:
-        resp = _research.finalize(
-            FinalizeRequest(thread_id="n/a", query=state["request"], approved=approved)
-        )
-    except ValidationRejected as e:
-        # Keep the reason; the router below sends the run back to the pause.
-        return {"approval_error": str(e)}
-    return {"variables": resp.variables, "approval_error": None}
+def report(state: OrchestratorState) -> dict:
+    """Write the final report. Every number keeps its source status."""
+    lines = [f"Market sizing: {state['request']}"]
+    for row in state["research_data"]["approved"]:
+        lines.append(f"- {row['name']}: {row['base']:,.0f} "
+                     f"(low {row['low']:,.0f}, high {row['high']:,.0f}) [{row['source_status']}]")
+    return {"result": {"report": "\n".join(lines)}}
 
 
-def _after_finalize(state: OrchestratorState) -> str:
-    """Rejected -> ask the human again. Accepted -> write the report."""
-    return "await_market_input" if state.get("approval_error") else "report"
+def route(state: OrchestratorState) -> str:
+    if state["research_state"] == "TASK_STATE_INPUT_REQUIRED":
+        return "human_review"
+    if state["research_state"] == "TASK_STATE_COMPLETED":
+        return "report"
+    return END
 
 
-def report_node(state: OrchestratorState) -> dict[str, Any]:
-    """Assemble the memo. Every number keeps its source_status (provenance)."""
-    lines = [f"Market sizing: {state['request']}", ""]
-    for v in state["variables"]:
-        lines.append(
-            f"- {v['name']}: base={v['base']} (low={v['low']}, high={v['high']}) "
-            f"[source={v['source_status']}]"
-        )
-    return {"report": "\n".join(lines)}
+def build_graph(checkpointer):
+    graph = StateGraph(OrchestratorState)
+    graph.add_node("call_research", call_research)
+    graph.add_node("human_review", human_review)
+    graph.add_node("report", report)
 
-
-def build_orchestrator(checkpointer):
-    g = StateGraph(OrchestratorState)
-    g.add_node("intake", intake_node)
-    g.add_node("research_gather", research_gather_node)
-    g.add_node("await_market_input", await_market_input_node)
-    g.add_node("research_finalize", research_finalize_node)
-    g.add_node("report", report_node)
-
-    g.add_edge(START, "intake")
-    g.add_edge("intake", "research_gather")
-    g.add_edge("research_gather", "await_market_input")
-    g.add_edge("await_market_input", "research_finalize")
-    g.add_conditional_edges(
-        "research_finalize",
-        _after_finalize,
-        {"await_market_input": "await_market_input", "report": "report"},
-    )
-    g.add_edge("report", END)
-
-    # A checkpointer is REQUIRED for interrupt()/resume to work.
-    return g.compile(checkpointer=checkpointer)
+    graph.add_edge(START, "call_research")
+    graph.add_conditional_edges("call_research", route, ["human_review", "report", END])
+    graph.add_edge("human_review", "call_research")
+    graph.add_edge("report", END)
+    return graph.compile(checkpointer=checkpointer)

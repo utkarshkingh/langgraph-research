@@ -5,11 +5,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir --break-system-packages . \
-    && pip install --no-cache-dir --break-system-packages '.[mcp]' || true
-
+# Copy the source, then install the package and its MCP extra.
 COPY . .
+RUN pip install --no-cache-dir ".[mcp]"
 
 # Which service: "orchestrator" (8080) or "research_agent" (8081).
 ARG SERVICE=orchestrator

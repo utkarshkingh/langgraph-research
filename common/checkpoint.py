@@ -21,8 +21,12 @@ def build_checkpointer():
     if settings.checkpoint_backend == "postgres":
         # production path — requires the `azure` extra (langgraph-checkpoint-postgres)
         from langgraph.checkpoint.postgres import PostgresSaver  # pragma: no cover
+        from psycopg import Connection  # pragma: no cover
 
-        saver = PostgresSaver.from_conn_string(settings.postgres_dsn)
+        # A long-lived connection for the life of the app (from_conn_string is a
+        # context manager, which would close the connection as soon as it returns).
+        conn = Connection.connect(settings.postgres_dsn, autocommit=True, prepare_threshold=0)
+        saver = PostgresSaver(conn)
         saver.setup()
         return saver
 

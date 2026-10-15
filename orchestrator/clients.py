@@ -15,6 +15,7 @@ from common.a2a import (
     HttpResearchClient,
     ResearchClient,
     TaskState,
+    ValidationRejected,
 )
 from common.config import settings
 
@@ -31,7 +32,10 @@ class InProcResearchClient:
     def finalize(self, req: FinalizeRequest) -> FinalizeResponse:
         from research_agent import graph
 
-        variables = graph.finalize(req.query, req.approved)
+        try:
+            variables = graph.finalize(req.query, req.approved)
+        except ValueError as e:
+            raise ValidationRejected(str(e)) from e
         return FinalizeResponse(state=TaskState.COMPLETED, variables=variables)
 
 

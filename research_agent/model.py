@@ -104,28 +104,35 @@ class AzureOpenAIModel(Model):  # pragma: no cover - prod path, needs azure extr
     """Prod brain. Prompts AzureChatOpenAI to return a Decision as JSON."""
 
     def __init__(self) -> None:
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         from langchain_openai import AzureChatOpenAI
 
-        self._llm = AzureChatOpenAI(
+        # Managed identity, no API key: Entra issues tokens for Azure OpenAI.
+        token_provider = get_bearer_token_provider(
+            DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+        )
+        llm = AzureChatOpenAI(
             azure_endpoint=settings.azure_openai_endpoint,
             azure_deployment=settings.azure_openai_deployment,
             api_version=settings.azure_openai_api_version,
+            azure_ad_token_provider=token_provider,
             temperature=0,
         )
+        # Structured output: the model must return a valid Decision, not free text.
+        self._llm = llm.with_structured_output(Decision, method="function_calling")
 
     def decide(self, query: str, evidence: list[dict[str, Any]]) -> Decision:
         import json
 
         system = (
             "You are a market-research planner. Given the query and the evidence so far, "
-            "reply with ONLY json: either "
-            '{"action":"tool","tool":"web_search"|"statista_lookup","args":{...}} or '
-            '{"action":"finish","proposed":[{name,low,base,high,source_status}]}. '
-            "Use source_status in {research_value, support_range, heuristic_fallback}."
+            "either call a tool (web_search with args.query, or statista_lookup with "
+            "args.topic) or finish with proposed assumptions {name, low, base, high, "
+            "source_status}. Use source_status in "
+            "{research_value, support_range, heuristic_fallback}."
         )
         user = json.dumps({"query": query, "evidence": evidence})
-        raw = self._llm.invoke([("system", system), ("user", user)]).content
-        return Decision(**json.loads(raw))
+        return self._llm.invoke([("system", system), ("user", user)])
 
 
 def build_model() -> Model:

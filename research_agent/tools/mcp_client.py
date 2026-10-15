@@ -32,11 +32,12 @@ _CANNED: dict[str, Any] = {
 def statista_lookup(topic: str) -> dict[str, Any]:
     if not settings.mcp_enabled:
         return {**_CANNED, "topic": topic}
-    return _lookup_over_mcp(topic)  # pragma: no cover - needs mcp extra + subprocess
+    return _lookup_over_mcp(topic)
 
 
-def _lookup_over_mcp(topic: str) -> dict[str, Any]:  # pragma: no cover
+def _lookup_over_mcp(topic: str) -> dict[str, Any]:
     import asyncio
+    import json
 
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -47,7 +48,17 @@ def _lookup_over_mcp(topic: str) -> dict[str, Any]:  # pragma: no cover
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 result = await session.call_tool("statista_lookup", {"topic": topic})
-                # FastMCP returns structured content; take the first text/JSON part.
-                return result.structuredContent or _CANNED
+
+        if result.isError:
+            raise RuntimeError(f"MCP tool error: {result.content}")
+        # Prefer the structured (JSON) result; fall back to a JSON text part.
+        if isinstance(result.structuredContent, dict):
+            data = result.structuredContent
+            return data.get("result", data)  # some return types arrive wrapped
+        for part in result.content:
+            if getattr(part, "type", None) == "text":
+                return json.loads(part.text)
+        # Never quietly substitute fake data for a failed real call.
+        raise RuntimeError("MCP tool returned no usable content")
 
     return asyncio.run(_run())

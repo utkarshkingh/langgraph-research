@@ -7,16 +7,18 @@ Requires the `mcp` extra:  pip install -e '.[mcp]'
 """
 from __future__ import annotations
 
+from typing import Any
+
 try:
     from mcp.server.fastmcp import FastMCP
 except ImportError as e:  # pragma: no cover
-    raise SystemExit("install the 'mcp' extra to run this server: pip install -e '.[mcp]'") from e
+    raise SystemExit("install the 'mcp' extra (1.x SDK) to run this server: pip install '.[mcp]'") from e
 
 mcp = FastMCP("statista-stub")
 
 
 @mcp.tool()
-def statista_lookup(topic: str) -> dict:
+def statista_lookup(topic: str) -> dict[str, Any]:
     """Return a base estimate, a low/high support range, and historical CAGR for a topic."""
     return {
         "topic": topic,

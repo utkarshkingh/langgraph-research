@@ -1,3 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Name the packages explicitly; a flat layout with several top-level folders
+# otherwise makes setuptools refuse to build.
+packages = ["common", "orchestrator", "research_agent", "research_agent.tools"]
+
 [project]
 name = "langgraph-hitl-reference"
 version = "0.1.0"
@@ -21,9 +30,12 @@ azure = [
     "azure-identity>=1.17.0",    # DefaultAzureCredential (managed identity)
     "PyJWT[crypto]>=2.9.0",      # Entra ID JWT validation (JWKS)
     "langgraph-checkpoint-postgres>=2.0.0",
+    "psycopg[binary]>=3.2.0",    # Postgres driver used by the checkpointer
 ]
 mcp = [
-    "mcp>=1.2.0",                # MCP client + FastMCP server (Statista-style tool)
+    # MCP client + FastMCP server (Statista-style tool). Pinned to the 1.x SDK:
+    # 2.x renamed FastMCP to MCPServer and changed other APIs.
+    "mcp>=1.10.0,<2",
 ]
 dev = [
     "pytest>=8.0.0",

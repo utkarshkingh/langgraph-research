@@ -25,6 +25,14 @@ class TaskState(str, Enum):
     FAILED = "failed"
 
 
+class ValidationRejected(Exception):
+    """The research agent refused the approved assumptions (e.g. low > base).
+
+    Both clients raise this one exception, so the orchestrator handles a rejection
+    the same way whether the agent ran in-process or over HTTP.
+    """
+
+
 class GatherRequest(BaseModel):
     thread_id: str
     query: str
@@ -84,5 +92,8 @@ class HttpResearchClient:
             headers=auth_header(),
             timeout=self._timeout,
         )
+        if r.status_code == 400:
+            # the agent's validation said no: a business outcome, not a crash
+            raise ValidationRejected(r.json().get("detail", "validation failed"))
         r.raise_for_status()
         return FinalizeResponse(**r.json())

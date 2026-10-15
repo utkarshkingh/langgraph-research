@@ -27,7 +27,7 @@ REQUEST = "Size the European EV charging aftermarket"
 def run_inproc() -> None:
     from langgraph.types import Command
 
-    from common.checkpoint import build_checkpointer
+    from common.checkpointer import build_checkpointer
     from orchestrator.graph import build_orchestrator
 
     graph = build_orchestrator(build_checkpointer())
@@ -52,7 +52,7 @@ def run_inproc() -> None:
 def run_http() -> None:
     import httpx
 
-    from common.auth import auth_header
+    from common.security import auth_header
 
     base = "http://localhost:8080"
     thread_id = str(uuid.uuid4())

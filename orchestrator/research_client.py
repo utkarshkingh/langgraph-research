@@ -1,28 +1,27 @@
-"""A2A (agent-to-agent) contract between the orchestrator and the research agent.
+"""How the orchestrator reaches the research agent (the client side of A2A).
 
-This is a deliberately small, readable take on the A2A protocol's core idea: a task
-has a lifecycle, and one of its states is INPUT_REQUIRED — the agent is telling the
-caller "I need a human decision before I can finish." That single state is what makes
-durable human-in-the-loop possible across a service boundary.
+  RESEARCH_MODE=inproc -> call the research graph in this process (simplest demo / tests)
+  RESEARCH_MODE=http   -> real A2A hop over HTTP, with the service token attached
 
-Real A2A has richer envelopes (Message / Part / Artifact, streaming via SSE). We keep
-two operations and the states that matter for this pattern.
+Both satisfy the same ResearchClient protocol, so graph.py doesn't care which is live.
+The request/response models come from the research agent's own contract
+(research_agent/schemas.py): the agent defines its API, the orchestrator calls it.
 """
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any, Protocol
+from typing import Protocol
 
 import httpx
-from pydantic import BaseModel
 
-from common.auth import auth_header
-
-
-class TaskState(str, Enum):
-    COMPLETED = "completed"
-    INPUT_REQUIRED = "input_required"   # the HITL signal
-    FAILED = "failed"
+from common.config import settings
+from common.security import auth_header
+from research_agent.schemas import (
+    FinalizeRequest,
+    FinalizeResponse,
+    GatherRequest,
+    GatherResponse,
+    TaskState,
+)
 
 
 class ValidationRejected(Exception):
@@ -31,30 +30,6 @@ class ValidationRejected(Exception):
     Both clients raise this one exception, so the orchestrator handles a rejection
     the same way whether the agent ran in-process or over HTTP.
     """
-
-
-class GatherRequest(BaseModel):
-    thread_id: str
-    query: str
-
-
-class GatherResponse(BaseModel):
-    state: TaskState
-    # when INPUT_REQUIRED: the assumptions the human must approve/override
-    proposed: list[dict[str, Any]] = []
-    note: str = ""
-
-
-class FinalizeRequest(BaseModel):
-    thread_id: str
-    query: str
-    approved: list[dict[str, Any]]      # the human-approved assumptions
-
-
-class FinalizeResponse(BaseModel):
-    state: TaskState
-    variables: list[dict[str, Any]] = []
-    note: str = ""
 
 
 class ResearchClient(Protocol):
@@ -97,3 +72,28 @@ class HttpResearchClient:
             raise ValidationRejected(r.json().get("detail", "validation failed"))
         r.raise_for_status()
         return FinalizeResponse(**r.json())
+
+
+class InProcResearchClient:
+    """Calls the research agent's functions directly — no network, no auth."""
+
+    def gather(self, req: GatherRequest) -> GatherResponse:
+        from research_agent import graph
+
+        proposed = graph.gather(req.query)
+        return GatherResponse(state=TaskState.INPUT_REQUIRED, proposed=proposed)
+
+    def finalize(self, req: FinalizeRequest) -> FinalizeResponse:
+        from research_agent import graph
+
+        try:
+            variables = graph.finalize(req.query, req.approved)
+        except ValueError as e:
+            raise ValidationRejected(str(e)) from e
+        return FinalizeResponse(state=TaskState.COMPLETED, variables=variables)
+
+
+def get_research_client() -> ResearchClient:
+    if settings.research_mode == "http":
+        return HttpResearchClient(settings.research_agent_url)
+    return InProcResearchClient()

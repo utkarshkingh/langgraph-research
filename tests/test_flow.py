@@ -10,7 +10,7 @@ import uuid
 import pytest
 from langgraph.types import Command
 
-from common.checkpoint import build_checkpointer
+from common.checkpointer import build_checkpointer
 from orchestrator.graph import build_orchestrator
 from research_agent import graph as research
 

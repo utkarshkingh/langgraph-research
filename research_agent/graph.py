@@ -15,14 +15,23 @@ A2A contract simple and the durable state single-sourced in the orchestrator.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 from research_agent.model import build_model
-from research_agent.state import ResearchState
 from research_agent.tools.mcp_client import statista_lookup
 from research_agent.tools.web_search import web_search
+
+
+class ResearchState(TypedDict, total=False):
+    """State for the research agent's inner ReAct graph."""
+
+    query: str
+    plan: list[str]
+    evidence: list[dict[str, Any]]      # [{tool, args, result}] — the observe log
+    pending: dict[str, Any] | None      # the next tool call the agent chose
+    proposed: list[dict[str, Any]]      # assumptions with source_status
 
 _model = build_model()
 

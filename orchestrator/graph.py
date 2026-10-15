@@ -19,16 +19,26 @@ request or a timeout.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from common.a2a import FinalizeRequest, GatherRequest, ValidationRejected
-from orchestrator.clients import get_research_client
-from orchestrator.state import OrchestratorState
+from orchestrator.research_client import ValidationRejected, get_research_client
+from research_agent.schemas import FinalizeRequest, GatherRequest
 
 _research = get_research_client()
+
+
+class OrchestratorState(TypedDict, total=False):
+    """State for the orchestrator's outer graph."""
+
+    request: str                         # the market scope to size
+    proposed: list[dict[str, Any]]       # assumptions the research agent proposed
+    approval: dict[str, Any]             # what the human returned on resume
+    approval_error: str | None           # set when validation rejects the approval
+    variables: list[dict[str, Any]]      # validated, approved assumptions
+    report: str                          # final assembled memo
 
 
 def intake_node(state: OrchestratorState) -> dict[str, Any]:

@@ -18,24 +18,14 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from langgraph.types import Command
-from pydantic import BaseModel
 
-from common.auth import verify_bearer
-from common.checkpoint import build_checkpointer
+from common.checkpointer import build_checkpointer
+from common.security import verify_bearer
 from orchestrator.graph import build_orchestrator
+from orchestrator.schemas import InvokeRequest, ResumeRequest
 
 app = FastAPI(title="orchestrator-gateway")
 _graph = build_orchestrator(build_checkpointer())
-
-
-class InvokeIn(BaseModel):
-    request: str
-    thread_id: str
-
-
-class ResumeIn(BaseModel):
-    thread_id: str
-    approved: list[dict[str, Any]]
 
 
 def _config(thread_id: str) -> dict:
@@ -63,13 +53,13 @@ def health() -> dict[str, str]:
 
 
 @app.post("/invoke", dependencies=[Depends(verify_bearer)])
-def invoke(body: InvokeIn) -> dict[str, Any]:
+def invoke(body: InvokeRequest) -> dict[str, Any]:
     result = _graph.invoke({"request": body.request}, config=_config(body.thread_id))
     return _respond(result, body.thread_id)
 
 
 @app.post("/resume", dependencies=[Depends(verify_bearer)])
-def resume(body: ResumeIn) -> dict[str, Any]:
+def resume(body: ResumeRequest) -> dict[str, Any]:
     try:
         result = _graph.invoke(
             Command(resume={"approved": body.approved}), config=_config(body.thread_id)

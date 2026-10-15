@@ -12,15 +12,15 @@ from __future__ import annotations
 
 from fastapi import Depends, FastAPI, HTTPException
 
-from common.a2a import (
+from common.security import verify_bearer
+from research_agent import graph
+from research_agent.schemas import (
     FinalizeRequest,
     FinalizeResponse,
     GatherRequest,
     GatherResponse,
     TaskState,
 )
-from common.auth import verify_bearer
-from research_agent import graph
 
 app = FastAPI(title="research-agent (A2A)")
 

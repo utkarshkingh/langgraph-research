@@ -3,9 +3,10 @@
 decide() looks at the query and the evidence gathered so far and returns the next
 action: call a tool, or finish with a set of proposed assumptions.
 
-  MODEL_BACKEND=scripted     -> deterministic policy, no LLM, no key. Runs the full
-                                reason->act->observe loop offline so the demo is real.
-  MODEL_BACKEND=azure_openai -> AzureChatOpenAI prompted to emit the same JSON action.
+  MODEL_BACKEND=litellm      -> DEFAULT. Company LiteLLM gateway, structured output.
+  MODEL_BACKEND=azure_openai -> Azure OpenAI with managed identity (no API key).
+  MODEL_BACKEND=scripted     -> deterministic test double, no LLM. Used by the tests and
+                                the offline backup demo only.
 
 Keeping one interface means the graph (graph.py) is identical whichever brain is used.
 """
@@ -100,24 +101,10 @@ class ScriptedModel(Model):
         return proposed
 
 
-class AzureOpenAIModel(Model):  # pragma: no cover - prod path, needs azure extra + key
-    """Prod brain. Prompts AzureChatOpenAI to return a Decision as JSON."""
+class LLMModel(Model):  # pragma: no cover - needs a real LLM endpoint
+    """The real brain: a chat model that must answer with a valid Decision."""
 
-    def __init__(self) -> None:
-        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-        from langchain_openai import AzureChatOpenAI
-
-        # Managed identity, no API key: Entra issues tokens for Azure OpenAI.
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
-        )
-        llm = AzureChatOpenAI(
-            azure_endpoint=settings.azure_openai_endpoint,
-            azure_deployment=settings.azure_openai_deployment,
-            api_version=settings.azure_openai_api_version,
-            azure_ad_token_provider=token_provider,
-            temperature=0,
-        )
+    def __init__(self, llm: Any) -> None:
         # Structured output: the model must return a valid Decision, not free text.
         self._llm = llm.with_structured_output(Decision, method="function_calling")
 
@@ -135,7 +122,53 @@ class AzureOpenAIModel(Model):  # pragma: no cover - prod path, needs azure extr
         return self._llm.invoke([("system", system), ("user", user)])
 
 
+def _litellm_chat_model() -> Any:
+    """Company LiteLLM gateway (OpenAI-compatible), same settings as the other agents.
+
+    The endpoint and virtual key are supplied by the deployment; blank here on purpose.
+    """
+    from langchain_openai import ChatOpenAI
+
+    values = {
+        "LITELLM_BASE_URL": settings.litellm_base_url,
+        "LITELLM_DEFAULT_MODEL": settings.litellm_default_model,
+        "LITELLM_VIRTUAL_KEY": settings.litellm_virtual_key,
+    }
+    missing = [name for name, value in values.items() if not value.strip()]
+    if missing:
+        raise ValueError(
+            "LiteLLM model configuration is incomplete: " + ", ".join(missing)
+            + ". Set them in .env (see .env.example), or MODEL_BACKEND=scripted for the offline demo."
+        )
+    return ChatOpenAI(
+        model=settings.litellm_default_model,
+        base_url=settings.litellm_base_url,
+        api_key=settings.litellm_virtual_key,
+        temperature=0,
+        timeout=600,
+    )
+
+
+def _azure_openai_chat_model() -> Any:
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    from langchain_openai import AzureChatOpenAI
+
+    # Managed identity, no API key: Entra issues tokens for Azure OpenAI.
+    token_provider = get_bearer_token_provider(
+        DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+    )
+    return AzureChatOpenAI(
+        azure_endpoint=settings.azure_openai_endpoint,
+        azure_deployment=settings.azure_openai_deployment,
+        api_version=settings.azure_openai_api_version,
+        azure_ad_token_provider=token_provider,
+        temperature=0,
+    )
+
+
 def build_model() -> Model:
+    if settings.model_backend == "scripted":      # offline test double: tests and backup demo only
+        return ScriptedModel()
     if settings.model_backend == "azure_openai":
-        return AzureOpenAIModel()
-    return ScriptedModel()
+        return LLMModel(_azure_openai_chat_model())
+    return LLMModel(_litellm_chat_model())        # default: litellm

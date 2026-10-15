@@ -5,15 +5,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Copy the source, then install the package and its MCP extra.
+# Copy the source, then install the package and the Azure extra.
 COPY . .
-RUN pip install --no-cache-dir ".[mcp]"
+RUN pip install --no-cache-dir ".[azure]"
 
 # Which service: "orchestrator" (8080) or "research_agent" (8081).
 ARG SERVICE=orchestrator
 ENV SERVICE=${SERVICE}
 ENV PORT=8080
 
-# Entra/managed-identity auth, Postgres checkpointing, Azure OpenAI, real search are
-# all enabled via env vars at deploy time — see .env.example. Image defaults are dev.
+# Everything is configured with env vars (LLM, Postgres, search, auth): see .env.example.
 CMD ["sh", "-c", "uvicorn ${SERVICE}.main:app --host 0.0.0.0 --port ${PORT}"]

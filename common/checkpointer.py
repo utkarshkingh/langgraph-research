@@ -5,8 +5,8 @@ hits interrupt(), LangGraph saves the full run state under the thread_id. The pr
 can be recycled, the user can walk away overnight; on resume we load the checkpoint
 and continue exactly where we paused.
 
-Local demo  -> SQLite (a file; zero setup).
-Production   -> Postgres (shared, survives container restarts, handles concurrency).
+Default      -> Postgres (shared, survives container restarts, handles concurrency).
+Tests / offline demo -> SQLite (a file; CHECKPOINT_BACKEND=sqlite).
 
 Both are just LangGraph `BaseCheckpointSaver`s — the graph code doesn't change.
 """
@@ -19,9 +19,13 @@ from common.config import settings
 
 def build_checkpointer():
     if settings.checkpoint_backend == "postgres":
-        # production path — requires the `azure` extra (langgraph-checkpoint-postgres)
-        from langgraph.checkpoint.postgres import PostgresSaver  # pragma: no cover
-        from psycopg import Connection  # pragma: no cover
+        if not settings.postgres_dsn:
+            raise ValueError(
+                "POSTGRES_DSN is empty. Set it in .env (see .env.example), or "
+                "CHECKPOINT_BACKEND=sqlite for the offline demo."
+            )
+        from langgraph.checkpoint.postgres import PostgresSaver
+        from psycopg import Connection
 
         # A long-lived connection for the life of the app (from_conn_string is a
         # context manager, which would close the connection as soon as it returns).
